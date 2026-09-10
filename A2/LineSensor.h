@@ -4,11 +4,6 @@
 #include <string>
 
 
-struct Vec2D {
-    float x;
-    float y;
-};
-
 class LineSensor : public Sensor
 {
 private:

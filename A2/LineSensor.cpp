@@ -1,6 +1,9 @@
 #include "LineSensor.h"
+#include "CRender.h"
+
 #include <iostream>
 #include <cmath>
+#include <algorithm>
 
 LineSensor::LineSensor(std::string id, double angleOffset, double probeLength, double initVal)
     : Sensor(std::move(id), initVal), mAngleOffset(angleOffset), mProbeLength(probeLength)
@@ -14,43 +17,49 @@ double LineSensor::Cross(Vec2D v, Vec2D w)
 
 void LineSensor::sense(double x, double y, double heading, const std::vector<Vec2D>& mapVerts)
 {
-    // 1. Calculate probe orientation and segment vector (P -> P + r)
-    double probeAngle = heading + mAngleOffset;
-    Vec2D P = { static_cast<float>(x), static_cast<float>(y) };
-    Vec2D r = { 
-        static_cast<float>(mProbeLength * std::cos(probeAngle)), 
-        static_cast<float>(mProbeLength * std::sin(probeAngle)) 
-    };
+    // 1. Calculate the ground coordinates directly beneath the sensor probe tip
+    double sensorAngle = heading + mAngleOffset;
+    double sx = x + mProbeLength * std::cos(sensorAngle);
+    double sy = y + mProbeLength * std::sin(sensorAngle);
 
     bool hitDetected = false;
-    size_t count = mapVerts.size();
+    
+    // Half of the 5-unit line width (2.5) plus a small tolerance margin (0.5)
+    const double halfLineWidth = 3.0;
+    const double thresholdSq = halfLineWidth * halfLineWidth;
+    const size_t count = mapVerts.size();
 
-    // 2. Test intersection against every boundary segment using cross-product logic
+    // 2. Measure distance from the sensor point (sx, sy) to each line segment AB
     for (size_t i = 0; i < count; ++i)
     {
         Vec2D A = mapVerts[i];
         Vec2D B = mapVerts[(i + 1) % count];
-        Vec2D s = { B.x - A.x, B.y - A.y };
 
-        double denom = Cross(r, s);
+        double dx = B.x - A.x;
+        double dy = B.y - A.y;
+        double segLenSq = dx * dx + dy * dy;
 
-        // Segments are not parallel
-        if (std::abs(denom) > 1e-6)
+        if (segLenSq < 1e-6) continue;
+
+        // Project sensor point (sx, sy) onto segment AB, clamped to [0, 1]
+        double t = ((sx - A.x) * dx + (sy - A.y) * dy) / segLenSq;
+        t = std::max(0.0, std::min(1.0, t));
+
+        // Coordinates of the closest point on segment AB
+        double closestX = A.x + t * dx;
+        double closestY = A.y + t * dy;
+
+        // Squared distance between sensor head and the segment
+        double distSq = (sx - closestX) * (sx - closestX) + (sy - closestY) * (sy - closestY);
+
+        if (distSq <= thresholdSq)
         {
-            Vec2D A_minus_P = { A.x - P.x, A.y - P.y };
-            double t = Cross(A_minus_P, s) / denom;
-            double u = Cross(A_minus_P, r) / denom;
-
-            // Intersection occurs within the probe span and along the wall segment
-            if (t >= 0.0 && t <= 1.0 && u >= 0.0 && u <= 1.0)
-            {
-                hitDetected = true;
-                break; // One intersection confirms the sensor is over a boundary line
-            }
+            hitDetected = true;
+            break;
         }
     }
 
-    // 3. Binary state: 1.0 = on line / crossing boundary, 0.0 = clear
+    // 3. Binary output: 1.0 if inside the line's width, 0.0 otherwise
     value = hitDetected ? 1.0 : 0.0;
 }
 
